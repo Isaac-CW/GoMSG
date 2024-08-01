@@ -1,7 +1,9 @@
 package client
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"p2psystem/common"
 	"time"
@@ -10,21 +12,76 @@ import (
 const (
 	// ClientNetworkType is a config variable that's fed into Dial as the Network argument
 	ClientNetworkType = "tcp";
+	// ClientDisconnect stops all handling functions
 	ClientDisconnect = 0;
 	
 )
 
-type clientConnection struct{
-	instructions chan int;
+type ClientSession struct {
+	connectedServers []*ClientConnection;
+	CurrentConnection *ClientConnection;
+}
+
+// ClientConnection represents a connection to a server
+type ClientConnection struct{
+	instructions chan uint8;
+	dead bool;
 	server net.Conn;
 }
 
-var currentConnection *clientConnection;
-var connectedServers []*clientConnection;
-var nickname string;
+var client ClientSession = ClientSession{
+	connectedServers: make([]*ClientConnection, 10),
+	CurrentConnection:  nil,
+}
+
+// GetSession is the accessor for the client's session
+func GetSession()(*ClientSession){
+	return &client;
+}
+
+// DisconnectAll will close every active connection in the given client session
+func DisconnectAll(session *ClientSession) (error){
+	// Prepare a DCN packet
+	// This is done separately from Disconnect so that one packet can be used
+	// for all connections rather than constantly making one for each connection
+	pkt := common.MsgPacket{
+		PktType: common.PktDCN,
+	}
+	data := make([]byte, common.PktBufferSize);
+
+	err := common.SerializePacket(&pkt, data);
+	if (err != nil){
+		fmt.Printf("clientMain.DisconnectAll: unable to serialize packet: %s", err);
+		return fmt.Errorf("clientMain.DisconnectAll: %s", err);
+	}
+
+	for _, v := range session.connectedServers{
+		if ((v == nil) || v.dead){
+			continue;
+		}
+		_, err = v.server.Write(data);
+		if (err != nil){
+			if (!errors.Is(err, io.EOF)){
+				fmt.Printf("clientMain.DisconnectAll: Unable to send DCN packet: %s", err);
+				return fmt.Errorf("clientMain.Disconnect: %s", err);
+			}
+		}
+		v.instructions <- ClientDisconnect;
+		v.dead = true;
+		v.server.Close();
+	}
+
+	return nil;
+}
+
+// Disconnect closes the given ClientConnection
+func Disconnect(connection *ClientConnection){
+	connection.server.Close();
+	connection.dead = true;
+}
 
 // SendMessage will send the given string to the connection
-func SendMessage(connection *clientConnection, msg string) (error){
+func SendMessage(connection *ClientConnection, msg string) (error){
 	// prepare a packet
 	var pkt common.MsgPacket = common.MsgPacket{
 		PktType: common.PktMSG,
@@ -47,9 +104,9 @@ func SendMessage(connection *clientConnection, msg string) (error){
 	return nil;
 }
 
-// GetCurrentConnection returns the connection the client is currently interfacing with
-func GetCurrentConnection() (*clientConnection){
-	return currentConnection;
+// GetCurrentConnection returns the connection the given client session is currently interfacing with
+func GetCurrentConnection(client *ClientSession) (*ClientConnection){
+	return client.CurrentConnection;
 }
 
 // SetNickname modifies the nickname the client is currently using and broadcasts
@@ -68,31 +125,16 @@ func Connect(addr string) (error){
 	}
 	//fmt.Printf("clientMain: dialled %s, from %s\n", conn.RemoteAddr().String(), conn.LocalAddr().String());
 	// Create the client
-	var client clientConnection = clientConnection{
-		server: conn,
-		instructions: make(chan int),
-	}
+	err = createConnection(&client, conn);
 
-	var status bool;
-	//fmt.Printf("clientMain: beginning handshake\n");
-	status, err = handleHandshake(&client);
 	if (err != nil){
-		client.server.Close();
+		fmt.Printf("clientMain: Unable to create connection: %s", err);
 		return fmt.Errorf("clientMain: %s", err);
 	}
-	if (!status){
-		fmt.Printf("clientMain: connection refused from %s\n", client.server.LocalAddr());
-		client.server.Close();
-		return nil;
-	}
-	fmt.Printf("clientMain: handshake completed\n");
 
-	currentConnection = &client;
-	go connMain(&client);
 	return nil;
 }
 
-func Init(startingNickname string) {
+func Init() {
 	fmt.Print("Client component initialised\n");
-	nickname = startingNickname;
 }

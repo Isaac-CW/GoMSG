@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"p2psystem/client"
+	"p2psystem/server"
 	"strings"
 )
 
@@ -27,11 +28,14 @@ func Init(){
 		}
 
 		var parseResult CLIParse = ParseStr(stdinStr);
+		session := client.GetSession();
+
 		switch parseResult.CmdType{
 		case MSG: {
-			delStr := strings.Repeat("\b", len(stdinStr) + 1);
-			fmt.Printf("%s",delStr);
-			client.SendMessage(client.GetCurrentConnection(), stdinStr);
+			//delStr := strings.Repeat("\b", len(stdinStr) + 1);
+			//fmt.Printf("%s",delStr);
+			fmt.Print("\033[F");
+			client.SendMessage(session.CurrentConnection, stdinStr);
 		}
 		case Quit: {
 			fmt.Print("Quitting\n");
@@ -48,5 +52,8 @@ func Init(){
 			break;
 		}
 	}
+	// Shutdown the client by disconnecting from all servers
+	client.DisconnectAll(client.GetSession());
+	server.Shutdown(server.GetServerRoom());
 
 }

@@ -1,11 +1,14 @@
 package server
 
+// Contains all the private methods used to manage connections
+
 import (
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"p2psystem/common"
+	"sync"
 	"time"
 )
 
@@ -14,6 +17,11 @@ type serverConnection struct{
 	nickname string;
 	dead bool;	// true if the socket is closed
 	instructions chan int8;
+}
+
+func kickClient(conn *serverConnection, reason string) (error){
+
+	return nil;
 }
 
 func handleHandshake(conn *serverConnection, allow bool) (bool, error){
@@ -64,7 +72,7 @@ func handleHandshake(conn *serverConnection, allow bool) (bool, error){
 	return true, nil;
 }
 
-func connectionMain(connection *serverConnection, server *serverRoom) (error){
+func connectionMain(connection *serverConnection, server *ServerRoom) (error){
 	inbound := make(chan bool);
 	var data [common.PktBufferSize]byte;
 
@@ -75,10 +83,10 @@ func connectionMain(connection *serverConnection, server *serverRoom) (error){
 			_, err := connection.client.Read(data[:]);
 			//fmt.Printf("connectionMain: Read data from %s\n", connection.client.RemoteAddr());
 			if (err != nil){
-				if (errors.Is(err, io.EOF)){
-					return;
+				if (!errors.Is(err, io.EOF) && !errors.Is(err, net.ErrClosed)){
+					fmt.Printf("serverMain: Unable to read from client: %s\n", err);
 				}
-				fmt.Printf("serverMain: Unable to read from client: %s\n", err);
+				inbound <- false;
 				return;
 			}
 
@@ -91,7 +99,12 @@ func connectionMain(connection *serverConnection, server *serverRoom) (error){
 	for {
 		if (brk){break;}
 		select {
-		case <- inbound:{
+		case active := <- inbound:{
+			if (!active){
+				brk = true;
+				continue;
+			}
+
 			//fmt.Printf("serverMain: received packet\n");
 			var readPKT common.MsgPacket = common.DeserializePacket(data[:]);
 			readPKT.SendNickname = connection.nickname;
@@ -105,6 +118,7 @@ func connectionMain(connection *serverConnection, server *serverRoom) (error){
 				}
 				// Sling it to every other client
 				for _, conn := range server.clients{
+					if ((conn == nil) || conn.dead){continue;}
 					_, err = conn.client.Write(data[:]);
 					if (err != nil){
 						// Kill any closed sockets and continue
@@ -119,33 +133,91 @@ func connectionMain(connection *serverConnection, server *serverRoom) (error){
 				}
 			}
 			case common.PktDCN:{
-				fmt.Printf("%s disconnected\n", connection.client.LocalAddr().String());
-				connection.dead = true;
-				connection.client.Close();
+				//fmt.Printf("%s disconnected\n", connection.client.LocalAddr().String());
 				brk = true;
 				continue;
 			}
 			}
 		}
 		case CurrentIns := <- connection.instructions:{
-			if CurrentIns == -1 {
-				connection.client.Close();
+			if (CurrentIns == ServerStop) {
+				fmt.Printf("Shutting down connection\n");
 				brk = true;
 				continue;
 			}
 		}
 		}
 	}
+
+	AnnounceMsg(server, fmt.Sprintf("%s disconnected from the room", connection.nickname));
 	connection.dead = true;
 	connection.client.Close();
+	server.childThreads.Done();
+	fmt.Printf("connectionHandler done\n");
 	return nil;
 }
 
+// Continuously accepts connections and runs a new goroutine running 
+// connectionMain to serve it
+func serverMain(server *ServerRoom){
+	defer server.mainThread.Done();
+	
+	inbound := make(chan net.Conn);
+
+	subThreads := sync.WaitGroup{};
+
+	subThreads.Add(1);
+	go func(){
+		defer subThreads.Done();
+
+		for {
+			var conn net.Conn;
+			conn, err := server.socket.Accept();
+			if (err != nil){
+				if !(errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed)){
+					fmt.Printf("serverMain: unable to accept connection: %s\n",err);
+				}
+				break;
+			}
+
+			inbound <- conn;
+		}
+	}()
+
+	brk := false;
+	for {
+		if (brk) {break;}
+		select {
+		case newConnection := <- inbound:{
+			createConnection(&serv, newConnection);
+		}
+		case currentInstruction := <- server.instructions:{
+			if (currentInstruction == ServerStop){
+				// Close any non-dead connections
+				for _, conn := range serv.clients{
+					if ((conn == nil) || conn.dead){
+						continue;
+					}
+					conn.instructions <- ServerStop;
+				}
+				brk = true;
+				continue;
+			}
+		}
+		}
+	}
+	serv.socket.Close();
+	serv.childThreads.Wait();
+
+	subThreads.Wait();
+}
+
 //
-func createConnection(server *serverRoom, inboundConnection net.Conn) (error){
+func createConnection(server *ServerRoom, inboundConnection net.Conn) (error){
 	newConn := serverConnection{
 		client: inboundConnection,
-		instructions: make(chan int8),
+		instructions: make(chan int8, 1),
+		dead: false,
 	}
 	
 	var accept bool;
@@ -195,6 +267,7 @@ func createConnection(server *serverRoom, inboundConnection net.Conn) (error){
 	AnnounceMsg(server, fmt.Sprintf("%s has joined the room", newConn.nickname));	
 
 	// And fork a new connectionHandler to serve it
+	server.childThreads.Add(1);
 	go connectionMain(&newConn, server);
 
 	return nil;

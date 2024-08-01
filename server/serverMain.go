@@ -6,34 +6,41 @@ import (
 	"io"
 	"net"
 	"p2psystem/common"
+	"sync"
 )
 
 // The server struct keeps track of which clients are connected to it
-type serverRoom struct {
+type ServerRoom struct {
 	socket net.Listener;
 	instructions chan uint8;
 	clients []*serverConnection;
 	maxClients uint8;
+	mainThread sync.WaitGroup;		// Tracks the goroutine running serverMain
+	childThreads sync.WaitGroup;	// Tracks the goroutines running connectionMain
 }
 
 const (
-	// InitialMaxClients is the initial max clients each serverRoom is set to
+	// InitialMaxClients is the initial max clients each ServerRoom is set to
 	InitialMaxClients = 10;
 	// ConnType is the protocol to use when creating new sockets
 	ConnType = "tcp";
 	// ServerStop indicates the server should stop listening for new connections and closes all existing ones
-	ServerStop = 1; 
+	ServerStop = 127; 
 )
 
 // For now we're just keeping it as one client has one server
-var serv serverRoom = serverRoom{
+var serv ServerRoom = ServerRoom{
 	socket: nil,
 	maxClients: InitialMaxClients,
+	instructions: make(chan uint8, 1),
 	clients: make([]*serverConnection, 0, InitialMaxClients),
+
+	mainThread: sync.WaitGroup{},
+	childThreads: sync.WaitGroup{},
 };
 
-// AnnounceMSG sends an ANC packet to all connected clients with the given message
-func AnnounceMsg(server *serverRoom, msg string) (error){
+// AnnounceMsg sends an ANC packet to all connected clients with the given message
+func AnnounceMsg(server *ServerRoom, msg string) (error){
 	pkt := common.MsgPacket{
 		PktType: common.PktANC,
 	}
@@ -65,40 +72,30 @@ func AnnounceMsg(server *serverRoom, msg string) (error){
 	return nil;
 }
 
-// Continuously accepts connections and runs a new goroutine running 
-// connectionMain to serve it
-func serverMain(server *serverRoom){
-	inbound := make(chan net.Conn);
+// GetServerRoom returns the given server room
+func GetServerRoom()(*ServerRoom){
+	return &serv;
+}
 
-	go func(){
-		for {
-			var conn net.Conn;
-			conn, err := server.socket.Accept();
-			if (err != nil){
-				if ((err == io.EOF) || (err == io.ErrUnexpectedEOF)){
-					print("EOF");
-					break;
-				}
-				fmt.Printf("serverMain: unable to accept connection: %s\n",err);
-				break;
-			}
-
-			inbound <- conn;
-		}
-	}()
-
-	for {
-		select {
-		case newConnection := <- inbound:{
-			createConnection(&serv, newConnection);
-		}
-		case currentInstruction := <- server.instructions:{
-			if (currentInstruction == ServerStop){
-				serv.socket.Close();
-			}
-		}
-		}
+// Shutdown will close the given serverRoom and disconnect the connected clients
+func Shutdown(server *ServerRoom) (error){
+	// Prepare a packet
+	pkt := common.MsgPacket{
+		PktType: common.PktKCK,
 	}
+	data := make([]byte, common.PktBufferSize);
+
+	err := common.EncodeMessage(&pkt, "server shutdown");
+	err = common.SerializePacket(&pkt, data);
+	if (err != nil){
+		fmt.Printf("serverMain.Shutdown: unable to send packet to clients: %s", err);
+		return fmt.Errorf("serverMain.Shutdown: %s", err);
+	}
+	server.instructions <- uint8(ServerStop);
+
+	server.mainThread.Wait();
+
+	return nil;
 }
 
 func Init(IP string, port int16) (error){
@@ -106,11 +103,12 @@ func Init(IP string, port int16) (error){
 
 	connection, err := net.Listen(ConnType, ":9002"); // TODO: replace with value
 	if (err != nil){
-		return fmt.Errorf("serverMain: %s");
+		return fmt.Errorf("serverMain: %s", err);
 	}
 
 	serv.socket = connection;
 
+	serv.mainThread.Add(1);
 	go serverMain(&serv);
 	return nil;
 	

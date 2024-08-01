@@ -37,6 +37,10 @@ const (
 	// PktDCN is sent from the client and indicates the client wishes to gracefully
 	// disconnect
 	PktDCN = 6;
+
+	// PktKCK is sent from the server to the client and indicates that the server
+	// forcefully disconnected a client. The payload indicates the kick reason
+	PktKCK = 7;
 )
 
 // MsgPacket is what is sent over sockets
