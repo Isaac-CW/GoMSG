@@ -13,7 +13,7 @@ All commands must have is 0th character be '/'
 	- Quit 			: The CLI input should stop and the application should shutdown
 	- Connect 		: Connect to a given address and port in the format address:port
 	- Disconnect 	:
-	- Nickname		:
+	- Nickname		: Signals to the connected server to change the nickname of the client
 */
 const (
 	MSG int = -2
@@ -21,6 +21,7 @@ const (
 	Quit int = 0
 	Connect int = 1
 	Disconnect int  = 2
+	Nickname int = 3
 
 )
 
@@ -68,6 +69,21 @@ func ParseStr(cmdStr string) CLIParse{
 		// Finalize by setting the CmdType to Connect
 		retVal.CmdType = Connect;
 	}
+
+	case "/nickname": fallthrough;
+	case "/NICKNAME": fallthrough;
+	case "/NICK": fallthrough;
+	case "/nick":{
+		if (len(cmdChunks) == 1){
+			fmt.Print("Missing nickname to change\n");
+			return retVal;
+		}
+		retVal.info = cmdChunks[1];
+
+		// Finalize by setting the CmdType to Nickname
+		retVal.CmdType = Nickname;
+	}
+
 	default:{
 		retVal.CmdType = Unknown;
 	}

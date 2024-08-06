@@ -3,11 +3,13 @@ package server
 // Contains all the private methods used to manage connections
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"p2psystem/common"
+	"strings"
 	"sync"
 	"time"
 )
@@ -19,7 +21,28 @@ type serverConnection struct{
 	instructions chan int8;
 }
 
+// Forcibly closes the client and issues a KCK packet to the client
 func kickClient(conn *serverConnection, reason string) (error){
+
+
+
+	return nil;
+}
+
+// changes the given client's nickname to the given new name and announces the
+// change to all clients
+func changeNickname(server *ServerRoom, conn *serverConnection, newName string) (error){
+	if ((conn == nil) || conn.dead){
+		return fmt.Errorf("Client is already closed");
+	}
+
+	if (conn.nickname == newName){
+		return nil
+	}
+	oldNick := conn.nickname;
+	conn.nickname = newName;
+
+	AnnounceMsg(server, fmt.Sprintf("%s has changed their name to %s", oldNick, conn.nickname));
 
 	return nil;
 }
@@ -67,6 +90,20 @@ func handleHandshake(conn *serverConnection, allow bool) (bool, error){
 		fmt.Printf("serverHandshake: unrecognised packet type\n");
 		return false, nil;
 	}
+	// Decode the packet's payload too
+	jsonRaw, err := common.DecodeMessage(&pkt);
+	jsonRaw = strings.Trim(jsonRaw, "\x00");
+	var clientMod common.ClientModifcation;
+
+	err = json.Unmarshal([]byte(jsonRaw), &clientMod);
+	if (err != nil){
+		fmt.Printf("serverHandshake: unable to unpack ACK packet: %s", err);
+		return false, fmt.Errorf("serverHandshake: %s", err);
+	}
+	// TODO: Check if the server has already labelled this client
+
+	conn.nickname = clientMod.NewName;
+
 	//fmt.Printf("serverHandshake: accepted ACK packet\n");
 
 	return true, nil;
@@ -95,6 +132,7 @@ func connectionMain(connection *serverConnection, server *ServerRoom) (error){
 	}()
 
 	brk := false;
+	var err error = nil;
 	
 	for {
 		if (brk){break;}
@@ -114,7 +152,9 @@ func connectionMain(connection *serverConnection, server *ServerRoom) (error){
 				err := common.SerializePacket(&readPKT, data[:]);
 				if (err != nil){
 					fmt.Printf("serverMain: unable to seralize MSG pkt: %s\n", err);
-					return fmt.Errorf("serverMain: %s", err);
+					err = fmt.Errorf("serverMain: %s", err);
+					brk = true;
+					continue;
 				}
 				// Sling it to every other client
 				for _, conn := range server.clients{
@@ -128,7 +168,9 @@ func connectionMain(connection *serverConnection, server *ServerRoom) (error){
 							continue;
 						}
 						fmt.Printf("serverMain: unable to send MSG pkt: %s\n", err);
-						return fmt.Errorf("serverMain: %s", err);
+						err = fmt.Errorf("serverMain: %s", err);
+						brk = true;
+						continue;
 					}
 				}
 			}
@@ -136,6 +178,29 @@ func connectionMain(connection *serverConnection, server *ServerRoom) (error){
 				//fmt.Printf("%s disconnected\n", connection.client.LocalAddr().String());
 				brk = true;
 				continue;
+			}
+			case common.PktMDF:{
+				// Decode the message
+				jsonRaw, err := common.DecodeMessage(&readPKT);
+				if (err != nil){
+					fmt.Printf("serverHandler.connectionMain: Unable to decode PktMDF packet: %s", err);
+					err = fmt.Errorf("serverHandler.conncetionMain: %s", err);
+					brk = true;
+					continue;
+				}
+				
+				asBytes := []byte(strings.Trim(jsonRaw, "\x00"));
+
+				var jsonPkt common.ClientModifcation;
+				err = json.Unmarshal(asBytes, &jsonPkt);
+				if (err != nil){
+					fmt.Printf("serverHandler.connectionMain: Unable to decode PktMDF payload: %s", err);
+					err = fmt.Errorf("serverHandler.conncetionMain: %s", err);
+					brk = true;
+					continue;
+				}
+				
+				changeNickname(server, connection, jsonPkt.NewName);
 			}
 			}
 		}
@@ -154,7 +219,7 @@ func connectionMain(connection *serverConnection, server *ServerRoom) (error){
 	connection.client.Close();
 	server.childThreads.Done();
 	fmt.Printf("connectionHandler done\n");
-	return nil;
+	return err;
 }
 
 // Continuously accepts connections and runs a new goroutine running 
@@ -263,7 +328,9 @@ func createConnection(server *ServerRoom, inboundConnection net.Conn) (error){
 	}
 
 	// Assign the client a temp nickname
-	newConn.nickname = fmt.Sprintf("guest%d", index);
+	if (newConn.nickname == ""){
+		newConn.nickname = fmt.Sprintf("guest%d", index);
+	}
 	AnnounceMsg(server, fmt.Sprintf("%s has joined the room", newConn.nickname));	
 
 	// And fork a new connectionHandler to serve it

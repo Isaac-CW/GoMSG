@@ -1,18 +1,20 @@
 package client
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"os"
 	"p2psystem/common"
+	"strings"
 	"sync"
 	"time"
 )
 
 //
-func handleHandshake(connection *ClientConnection) (bool, error){
+func handleHandshake(session *ClientSession, connection *ClientConnection) (bool, error){
 	var data []byte = make([]byte, common.PktBufferSize);
 
 	//fmt.Printf("clientHandshake: connecting with %s from %s\n", connection.server.RemoteAddr(), connection.server.LocalAddr());
@@ -43,6 +45,22 @@ func handleHandshake(connection *ClientConnection) (bool, error){
 	pkt = common.MsgPacket{
 		PktType: common.PktACK,
 	}
+	// Encode the data in
+	var modifierpkt common.ClientModifcation = common.ClientModifcation{
+		NewName: session.Config.DefaultName,
+	}
+	// Then write it to JSON
+	ackPkt, err := json.Marshal(modifierpkt);
+	if (err != nil){
+		fmt.Printf("clientHandshake: unable to encode config to ACK packet: %s\n", err);
+		return false, fmt.Errorf("clientHandshake: %s", err);
+	}
+	err = common.EncodeMessage(&pkt, strings.Trim(string(ackPkt), "\x00"));
+	if (err != nil){
+		fmt.Printf("clientHandshake: unable to encode json: %s\n", err);
+		return false, fmt.Errorf("clientHandshake: %s", err);
+	}
+
 	err = common.SerializePacket(&pkt, data);
 	if (err != nil){
 		fmt.Printf("clientHandshake: unable to serialize ACK packet: %s\n", err);
@@ -171,7 +189,7 @@ func createConnection(session *ClientSession, connection net.Conn) (error){
 		dead: false,
 	}
 
-	status, err := handleHandshake(&newClient);
+	status, err := handleHandshake(session,&newClient);
 
 	if (err != nil){
 		fmt.Printf("clientHandler.makeConnection: unable to complete handshake: %s", err);

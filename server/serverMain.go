@@ -58,6 +58,10 @@ func AnnounceMsg(server *ServerRoom, msg string) (error){
 	}
 
 	for ind, conn := range server.clients{
+		if ((conn == nil) || conn.dead){
+			continue;
+		}
+
 		_, err = conn.client.Write(dataBuffer);
 		if (err != nil){
 			if (errors.Is(err, io.EOF)){

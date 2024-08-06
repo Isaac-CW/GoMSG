@@ -41,14 +41,24 @@ const (
 	// PktKCK is sent from the server to the client and indicates that the server
 	// forcefully disconnected a client. The payload indicates the kick reason
 	PktKCK = 7;
+
+	// PktMDF is sent from the client to the server to indicate the client wishes
+	// to modify a property. The payload of this is a JSON file
+	PktMDF = 8;
 )
+
+// ClientModifcation is a struct used to encode and decode JSON packets for
+// PktMDF 
+type ClientModifcation struct{
+	NewName string;
+}
 
 // MsgPacket is what is sent over sockets
 type MsgPacket struct {
 	PktType uint8
 	Timestamp uint64
-	SendNickname string;	// Filled in by the server
-	PayloadSize uint16;
+	SendNickname string	// Filled in by the server
+	PayloadSize uint16
 	Payload [2048]byte
 }
 

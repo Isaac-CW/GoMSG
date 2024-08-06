@@ -44,6 +44,9 @@ func Init(){
 		case Connect: {			
 			client.Connect(parseResult.address);
 		}
+		case Nickname: {
+			client.ChangeNickname(session.CurrentConnection, parseResult.info);
+		}
 		default:{
 			fmt.Print("Invalid command\n");
 		}
