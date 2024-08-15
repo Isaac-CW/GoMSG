@@ -47,7 +47,7 @@ func changeNickname(server *ServerRoom, conn *serverConnection, newName string) 
 	return nil;
 }
 
-func handleHandshake(conn *serverConnection, allow bool) (bool, error){
+func handleHandshake(session *ServerRoom,conn *serverConnection, allow bool) (bool, error){
 	var data []byte = make([]byte, common.PktBufferSize);
 
 	var pkt common.MsgPacket;
@@ -103,6 +103,16 @@ func handleHandshake(conn *serverConnection, allow bool) (bool, error){
 	// TODO: Check if the server has already labelled this client
 
 	conn.nickname = clientMod.NewName;
+	// Also check if there's a collision in names
+	for _, otherConn := range session.clients{
+		if ((otherConn == nil) || otherConn.dead){
+			continue;
+		}
+		if (otherConn.nickname == conn.nickname){
+			conn.nickname = "";
+			break;
+		}
+	}
 
 	//fmt.Printf("serverHandshake: accepted ACK packet\n");
 
@@ -308,7 +318,7 @@ func createConnection(server *ServerRoom, inboundConnection net.Conn) (error){
 	}
 
 	//fmt.Printf("serverHandler: beginning handshake with %s\n", newConn.client.RemoteAddr());
-	result, err := handleHandshake(&newConn, accept);
+	result, err := handleHandshake(server, &newConn, accept);
 	if (err != nil){
 		return fmt.Errorf("createConnection: %s", err);
 	}

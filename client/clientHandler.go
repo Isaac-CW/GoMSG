@@ -173,7 +173,7 @@ func connMain(connection *ClientConnection) (error){
 		}
 		}
 	}
-
+	connection.dead = true;
 	connection.server.Close();
 	childThreads.Wait();
 	return nil;

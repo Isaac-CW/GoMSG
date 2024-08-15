@@ -42,8 +42,25 @@ func Init(){
 			brk = true;
 		}
 		case Connect: {			
-			client.Connect(parseResult.address);
+			aliasedAddr, err := client.GetSavedRoom(session, parseResult.address);
+
+			if (err != nil){
+				fmt.Printf("cliMain: unable to parse /connect: %s", err);
+				return;
+			}
+
+			if (aliasedAddr == ""){
+				fmt.Printf("Connecting to address\n");
+				client.Connect(parseResult.address);
+			} else {
+				fmt.Printf("Connecting to alias %s, addr: %s\n", parseResult.address, aliasedAddr);
+				client.Connect(aliasedAddr)
+			}
 		}
+		case ViewSaved:{
+			client.DisplaySavedAliases(session);
+		}
+
 		case Nickname: {
 			client.ChangeNickname(session.CurrentConnection, parseResult.info);
 		}
@@ -58,5 +75,7 @@ func Init(){
 	// Shutdown the client by disconnecting from all servers
 	client.DisconnectAll(client.GetSession());
 	server.Shutdown(server.GetServerRoom());
+
+	client.WriteConfig(client.GetSession(), "config");
 
 }

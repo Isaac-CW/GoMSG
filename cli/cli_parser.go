@@ -14,6 +14,7 @@ All commands must have is 0th character be '/'
 	- Connect 		: Connect to a given address and port in the format address:port
 	- Disconnect 	:
 	- Nickname		: Signals to the connected server to change the nickname of the client
+	- ViewSaved		: Displays all saved servers
 */
 const (
 	MSG int = -2
@@ -22,6 +23,7 @@ const (
 	Connect int = 1
 	Disconnect int  = 2
 	Nickname int = 3
+	ViewSaved int = 4
 
 )
 
@@ -82,6 +84,11 @@ func ParseStr(cmdStr string) CLIParse{
 
 		// Finalize by setting the CmdType to Nickname
 		retVal.CmdType = Nickname;
+	}
+
+	case "/viewsaved": fallthrough;	
+	case "/VIEWSAVED":{
+		retVal.CmdType = ViewSaved;
 	}
 
 	default:{
